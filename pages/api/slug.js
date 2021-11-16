@@ -1,16 +1,15 @@
 const puppeteer = require('puppeteer-core');
-const cheerio = require('cheerio');
 const chrome = require('chrome-aws-lambda');
 
 export default async (req, res) => {
-    // const slug = req?.query?.slug;
-    // if (!slug) {
-    //     res.statusCode = 200
-    //     res.setHeader('Content-Type', 'application/json')
-    //     res.end(JSON.stringify({ id: null }))
-    //     return;
-    // }
-
+    const slug = req?.query?.videoId;
+    if (!slug) {
+        res.statusCode = 200
+        res.setHeader('Content-Type', 'application/json')
+        res.end(JSON.stringify({ id: null }))
+        return;
+    }
+    console.log("Searching for vidoe id: " + slug)
     const browser = await chrome.puppeteer.launch(
         {
             args: chrome.args,
@@ -20,28 +19,40 @@ export default async (req, res) => {
 
     );
 
-    const page = await browser.newPage();
-    page.setUserAgent('Opera/9.80 (J2ME/MIDP; Opera Mini/5.1.21214/28.2725; U; ru) Presto/2.8.119 Version/11.10');
-    await page.goto(`https://gist.githubusercontent.com/agungjk/ff542367470d156478f7381af2cf7e60/raw/9e2eb9f542a6e528dc13ad57a74e1c3961deddb2/%255Bslug%255D.js`);
-
-    let content = await page.content();
-    console.log(content);
-    var $ = cheerio.load(content);
-    $.prototype.exists = function (selector) {
-        return this.find(selector).length > 0;
+    var functionToInject = function (slug) {
+        let videos = window.ytInitialData.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents["0"].itemSectionRenderer.contents;
+        if (!videos.length) { // includes other renderers i.e: "did you mean ..."
+            console.log('no videos in search');
+            return "";
+        }
+        let video = videos.filter(v => v.videoRenderer && v.videoRenderer.videoId == slug)
+        if (!video.length) {
+            console.log('no video by that ID in search');
+            return "";
+        }
+        let thumbs = video[0].videoRenderer.richThumbnail.movingThumbnailRenderer.movingThumbnailDetails.thumbnails;
+        if (!thumbs.length) {
+            console.log('no moving thumbs for that video');
+            return "";
+        }
+        console.log(thumbs[0].url);
+        return thumbs[0].url;
     }
 
-    // let id = null;
-    // const isLive = $('body').exists('[data-style="LIVE"]');
-    // if (isLive) {
-    //     const url = $('ytm-compact-video-renderer .compact-media-item-image').attr('href');
-    //     const arr = url.split('?v=');
-    //     id = arr[1];
-    // }
+    const page = await browser.newPage();
+    await page.goto(`https://www.youtube.com/results?search_query=${slug}`);
+
+    const response = await page.evaluate(functionToInject, slug);
+    console.log("See me response");
+    console.log(response);
 
     await browser.close();
 
     res.statusCode = 200
     res.setHeader('Content-Type', 'application/json')
-    res.end(JSON.stringify({ "Hello": content }))
+    if (response == "") {
+        res.end(JSON.stringify({ "error": "No data found" }))
+    } else {
+        res.end(JSON.stringify({ "url": response }))
+    }
 }
